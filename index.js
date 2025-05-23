@@ -1,44 +1,45 @@
-const express = require('express')
-const dotenv = require('dotenv')
-const mongoose = require('mongoose')
-const Contact = require('./schemas/contactSchema')
-dotenv.config()
+const express = require("express");
+const dotenv = require("dotenv");
+const mongoose = require("mongoose");
+const Contact = require("./schemas/contactSchema");
+dotenv.config();
 
-const app = express()
+const app = express();
+app.use(express.json());
 
-app.use(express.json())
+// Connect to MongoDB
+mongoose
+  .connect(process.env.MONGODB_URI)
+  .then(() => {
+    console.log("MongoDB connected");
+  })
+  .catch((e) => {
+    console.error(`Error connecting to MongoDB: ${e}`);
+  });
 
-mongoose.connect(process.env.MONGODB_URI)
-.then(()=>{
-    console.log('MongoDB connected')
-})
-.catch((e)=>{
-    console.error(`Error connecting to MongoDB ${e}`)
-})
+// POST /identify route
+app.post("/identify", async (req, res) => {
+  try {
+    const { email, phoneNumber } = req.body;
 
+    if (!email && !phoneNumber) {
+      return res
+        .status(400)
+        .json({ error: "Email or phone number is required" });
+    }
 
+    // Find existing matching contacts
+    const matchedContacts = await Contact.find({
+      $or: [{ email: email || null }, { phoneNumber: phoneNumber || null }],
+    });
 
-app.post('/identify',async (req,res)=>{
-   try{
-        const {email,phoneNumber} = req.body
-    
-        if(!email && !phoneNumber){
-            return res.status(400).json({error : 'Email and phone number required'})
-        }
-
-        const matchedContacts =  await Contact.find({
-            $or : [
-                {email : email || null},
-                {phoneNumber : phoneNumber || null}
-            ]
-        });
-
-       if (matchedContacts.length === 0) {
+    // No match -> create new primary contact
+    if (matchedContacts.length === 0) {
       const newContact = await Contact.create({
         email: email || null,
         phoneNumber: phoneNumber || null,
         linkedId: null,
-        linkPrecedence: 'primary'
+        linkPrecedence: "primary",
       });
 
       return res.status(200).json({
@@ -46,29 +47,27 @@ app.post('/identify',async (req,res)=>{
           primaryContactId: newContact._id,
           emails: [newContact.email].filter(Boolean),
           phoneNumbers: [newContact.phoneNumber].filter(Boolean),
-          secondaryContactIds: []
-        }
+          secondaryContactIds: [],
+        },
       });
     }
 
-    //Found few matches so find out their Ids which are primary and secondary both and seach all contacts in the DB
-    const contactIds = matchedContacts.map(c => c._id.toString());
+    // Found some matches
+    const contactIds = matchedContacts.map((c) => c._id.toString());
     const linkedIds = matchedContacts
-      .filter(c => c.linkedId)
-      .map(c => c.linkedId.toString());
+      .filter((c) => c.linkedId)
+      .map((c) => c.linkedId.toString());
 
     const allIds = [...new Set([...contactIds, ...linkedIds])];
 
     const relatedContacts = await Contact.find({
-      $or: [
-        { _id: { $in: allIds } },
-        { linkedId: { $in: allIds } }
-      ]
+      $or: [{ _id: { $in: allIds } }, { linkedId: { $in: allIds } }],
     });
-    
-     const primaryContact = relatedContacts.reduce((earliest, contact) => {
+
+    // Find earliest primary contact
+    const primaryContact = relatedContacts.reduce((earliest, contact) => {
       if (
-        contact.linkPrecedence === 'primary' &&
+        contact.linkPrecedence === "primary" &&
         (!earliest || contact.createdAt < earliest.createdAt)
       ) {
         return contact;
@@ -76,9 +75,11 @@ app.post('/identify',async (req,res)=>{
       return earliest;
     }, null);
 
-    //Trying to find whether the relatedcontacts which is the existing records are having email and phone number if there is a match then name it secondary
-    const existingEmails = relatedContacts.map(c => c.email).filter(Boolean);
-    const existingPhones = relatedContacts.map(c => c.phoneNumber).filter(Boolean);
+    // Check if the input is a new email or phone number
+    const existingEmails = relatedContacts.map((c) => c.email).filter(Boolean);
+    const existingPhones = relatedContacts
+      .map((c) => c.phoneNumber)
+      .filter(Boolean);
 
     const isNewEmail = email && !existingEmails.includes(email);
     const isNewPhone = phoneNumber && !existingPhones.includes(phoneNumber);
@@ -88,33 +89,46 @@ app.post('/identify',async (req,res)=>{
         email: email || null,
         phoneNumber: phoneNumber || null,
         linkedId: primaryContact._id,
-        linkPrecedence: 'secondary'
+        linkPrecedence: "secondary",
       });
     }
 
-       
-        
+    // Final response construction
+    const finalRelated = await Contact.find({
+      $or: [{ _id: primaryContact._id }, { linkedId: primaryContact._id }],
+    });
 
+    const emails = [
+      ...new Set(finalRelated.map((c) => c.email).filter(Boolean)),
+    ];
+    const phones = [
+      ...new Set(finalRelated.map((c) => c.phoneNumber).filter(Boolean)),
+    ];
+    const secondaryIds = finalRelated
+      .filter((c) => c.linkPrecedence === "secondary")
+      .map((c) => c._id);
 
-        }
-    }
-    catch(error){
-        console.error(error)
-        res.status(500).json({error : 'Internal Server Error'})
+    return res.status(200).json({
+      contact: {
+        primaryContactId: primaryContact._id,
+        emails,
+        phoneNumbers: phones,
+        secondaryContactIds: secondaryIds,
+      },
+    });
+  } catch (error) {
+    console.error("Error in /identify route:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
 
-    }
+// Root route
+app.get("/", (req, res) => {
+  res.send("Hello Bitespeed");
+});
 
-
-})
-
-
-
-app.get('/',(req,res)=>{
-    res.send('Hello Bitespeed')
-})
-
-const PORT = process.env.PORT || 3000
-
-app.listen(PORT,()=>{
-    console.log(`Server started listening on ${PORT}`)
-})
+// Start server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Server started listening on port ${PORT}`);
+});
