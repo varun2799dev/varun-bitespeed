@@ -33,25 +33,44 @@ app.post('/identify',async (req,res)=>{
             ]
         });
 
-        if (matchedContacts.length === 0){
-            
-            const newContact = await Contact.create({
-                email : email || null,
-                phoneNumber : phoneNumber || null,
-                linkedId : null,
-                linkPrecedence : 'primary'
-            })
+       if (matchedContacts.length === 0) {
+      const newContact = await Contact.create({
+        email: email || null,
+        phoneNumber: phoneNumber || null,
+        linkedId: null,
+        linkPrecedence: 'primary'
+      });
+
+      return res.status(200).json({
+        contact: {
+          primaryContactId: newContact._id,
+          emails: [newContact.email].filter(Boolean),
+          phoneNumbers: [newContact.phoneNumber].filter(Boolean),
+          secondaryContactIds: []
+        }
+      });
+    }
+
+    //Found few matches so find out their Ids which are primary and secondary both and seach all contacts in the DB
+    const contactIds = matchedContacts.map(c => c._id.toString());
+    const linkedIds = matchedContacts
+      .filter(c => c.linkedId)
+      .map(c => c.linkedId.toString());
+
+    const allIds = [...new Set([...contactIds, ...linkedIds])];
+
+    const relatedContacts = await Contact.find({
+      $or: [
+        { _id: { $in: allIds } },
+        { linkedId: { $in: allIds } }
+      ]
+    });
+
+
+       
         
 
 
-        return res.status(200).json({
-           contact : {
-            primaryContactId: newContact._id,
-            emails: [newContact.email].filter(Boolean),
-            phoneNumbers: [newContact.phoneNumber].filter(Boolean),
-            secondaryContactIds: []
-           }
-         });
         }
     }
     catch(error){
