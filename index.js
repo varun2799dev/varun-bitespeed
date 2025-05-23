@@ -65,7 +65,32 @@ app.post('/identify',async (req,res)=>{
         { linkedId: { $in: allIds } }
       ]
     });
+    
+     const primaryContact = relatedContacts.reduce((earliest, contact) => {
+      if (
+        contact.linkPrecedence === 'primary' &&
+        (!earliest || contact.createdAt < earliest.createdAt)
+      ) {
+        return contact;
+      }
+      return earliest;
+    }, null);
 
+    //Trying to find whether the relatedcontacts which is the existing records are having email and phone number if there is a match then name it secondary
+    const existingEmails = relatedContacts.map(c => c.email).filter(Boolean);
+    const existingPhones = relatedContacts.map(c => c.phoneNumber).filter(Boolean);
+
+    const isNewEmail = email && !existingEmails.includes(email);
+    const isNewPhone = phoneNumber && !existingPhones.includes(phoneNumber);
+
+    if (isNewEmail || isNewPhone) {
+      await Contact.create({
+        email: email || null,
+        phoneNumber: phoneNumber || null,
+        linkedId: primaryContact._id,
+        linkPrecedence: 'secondary'
+      });
+    }
 
        
         
